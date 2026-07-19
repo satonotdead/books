@@ -1,9 +1,8 @@
-import time
 import json
-import re
+import time
 from urllib.parse import urlparse
-from pathlib import Path
-from stacks.constants import COOKIE_CACHE_DIR
+
+from stacks.constants import COOKIE_CACHE_DIR, KNOWN_MD5
 from stacks.utils.domainutils import get_working_domain, try_domains_until_success
 
 def _get_cookie_filename(domain_or_url):
@@ -36,7 +35,7 @@ def _load_cached_cookies(d, domain=None):
         domain: Domain or URL to load cookies for (default: current working domain)
 
     Supports two formats:
-    1. JSON format: {"timestamp": 123456, "cookies": {"name": "value", ...}}
+    1. JSON format: {"timestamp": 123456, "cookies": {"name": "value", ...}, "user_agent": "..."}
     2. Simple dict format: {"name": "value", ...}
 
     If timestamp is present and cookies are >24h old, they're still loaded but marked as potentially stale.
@@ -57,6 +56,7 @@ def _load_cached_cookies(d, domain=None):
                     # Format 1: Full format with timestamp
                     cookies_dict = data.get('cookies', {})
                     cached_time = data.get('timestamp', 0)
+                    user_agent = data.get('user_agent')
 
                     if time.time() - cached_time < 86400:
                         d.logger.info(f"Loaded {len(cookies_dict)} fresh cached cookies for {domain}")
@@ -65,6 +65,7 @@ def _load_cached_cookies(d, domain=None):
                 else:
                     # Format 2: Simple dict of cookies (manual entry)
                     cookies_dict = data
+                    user_agent = None
                     d.logger.info(f"Loaded {len(cookies_dict)} manually cached cookies for {domain}")
 
                 # Extract actual domain from URL if needed
@@ -77,18 +78,23 @@ def _load_cached_cookies(d, domain=None):
                 for name, value in cookies_dict.items():
                     d.session.cookies.set(name, value, domain=actual_domain)
 
+                if user_agent:
+                    d.session.headers.update({'User-Agent': user_agent})
+                    d.logger.debug(f"Loaded cached User-Agent for {domain}")
+
                 return True
         except Exception as e:
             d.logger.debug(f"Failed to load cached cookies for {domain}: {e}")
     return False
 
-def _save_cookies_to_cache(d, cookies_dict, domain=None):
+def _save_cookies_to_cache(d, cookies_dict, domain=None, user_agent=None):
     """Save cookies to domain-specific cache file.
 
     Args:
         d: Downloader instance
         cookies_dict: Dictionary of cookie name-value pairs
         domain: Domain or URL these cookies are for (default: current working domain)
+        user_agent: User-Agent that produced the cookies, if known
     """
     if domain is None:
         domain = get_working_domain()
@@ -99,10 +105,13 @@ def _save_cookies_to_cache(d, cookies_dict, domain=None):
         COOKIE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         with open(cookie_file, 'w') as f:
-            json.dump({
+            payload = {
                 'timestamp': time.time(),
                 'cookies': cookies_dict
-            }, f, indent=2)
+            }
+            if user_agent:
+                payload['user_agent'] = user_agent
+            json.dump(payload, f, indent=2)
 
         d.logger.info(f"Cached {len(cookies_dict)} cookies for {domain} -> {cookie_filename}")
     except Exception as e:
@@ -117,7 +126,6 @@ def _prewarm_cookies_single_domain(d, domain):
 
     # Use a slow_download URL to trigger DDG challenge and get all cookies
     # This ensures we get __ddg* cookies needed for slow_download access
-    from stacks.constants import KNOWN_MD5
     test_url = f"https://{domain}/slow_download/{KNOWN_MD5}/0/0"
 
     success, cookies, _ = d.solve_with_flaresolverr(test_url)

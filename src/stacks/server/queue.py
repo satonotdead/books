@@ -155,6 +155,17 @@ class DownloadQueue:
             self.save()
             self.logger.info(f"Cleared history: {count} items removed")
             return count
+
+    def remove_history_item(self, md5):
+        """Remove a single item from history"""
+        with self.lock:
+            original_length = len(self.history)
+            self.history = [item for item in self.history if item['md5'] != md5]
+            removed = original_length != len(self.history)
+            if removed:
+                self.save()
+                self.logger.info(f"Removed history item: {md5}")
+            return removed
     
     def retry_failed(self, md5):
         """Retry a failed download by removing from history and re-adding to queue"""

@@ -32,11 +32,11 @@
 3. **Build and start**
 
    ```bash
-   sudo chmod +x build.sh
-   ./build.sh
+   sudo chmod +x build-and-launch.sh
+   ./build-and-launch.sh
    ```
 
-   The build script will:
+   The build-and-launch script will:
 
    - Stop any existing container
    - Remove old containers and images

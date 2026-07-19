@@ -113,5 +113,5 @@ else
     exit 1
 fi
 
-echo -e "\n\n${ORANGE}► Attaching logs (Ctrl+C to exit)...${RESET}"
-docker logs -f "$SERVICE"
+echo -e "\n\n${ORANGE}► Attaching logs for ${SERVICE} and ${FLARESOLVERR} (Ctrl+C to exit)...${RESET}"
+$COMPOSE logs -f "$SERVICE" "$FLARESOLVERR"

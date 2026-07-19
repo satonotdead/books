@@ -348,7 +348,14 @@ class DownloadWorker:
                     continue
 
                 if success:
-                    self.queue.mark_complete(item['md5'], True, filepath=filepath, used_fast_download=used_fast_download, filename=filename, subfolder=item.get('subfolder'))
+                    self.queue.mark_complete(
+                        item['md5'],
+                        True,
+                        filepath=filepath,
+                        used_fast_download=used_fast_download,
+                        filename=None,
+                        subfolder=item.get('subfolder')
+                    )
                 else:
                     self.queue.mark_complete(item['md5'], False, error="Download failed", filename=filename, subfolder=item.get('subfolder'))
 

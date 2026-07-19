@@ -9,7 +9,7 @@ def get_all_domains():
     """Get all Anna's Archive domains: hardcoded list plus any extras found via Wikipedia."""
     from stacks.utils.domainupdater import get_wiki_mirrors
     extras = get_wiki_mirrors()
-    return ANNAS_ARCHIVE_DOMAINS + [d for d in extras if d not in ANNAS_ARCHIVE_DOMAINS]
+    return list(dict.fromkeys(ANNAS_ARCHIVE_DOMAINS + [d for d in extras if d not in ANNAS_ARCHIVE_DOMAINS]))
 
 
 def get_working_domain():

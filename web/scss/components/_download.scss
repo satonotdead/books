@@ -11,6 +11,7 @@
     align-items: center;
     gap: 12px;
     padding: $spacing-xs;
+    flex-wrap: wrap;
   }
 
   .add-label {
@@ -21,12 +22,33 @@
 
   input[type="text"] {
     flex: 1;
+    min-width: 220px;
     padding: 7px;
     border-radius: $border-radius-md;
     @include border($border-thin, $purple);
     background: $bg2;
     color: $foreground;
     font-size: 14px;
+  }
+
+  .btn--browse {
+    min-height: 54px;
+    padding: 12px 18px;
+    border: 2px solid rgba(248, 248, 242, 0.18);
+    font-size: 1.05em;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    white-space: nowrap;
+
+    &::before {
+      font-size: 1.35em;
+      margin: 0;
+    }
   }
 }
 

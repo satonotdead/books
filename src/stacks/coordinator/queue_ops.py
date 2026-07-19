@@ -1,18 +1,26 @@
 """
 Queue operations using SQLite.
 
-Provides thread-safe and process-safe queue management via SQLite with WAL mode.
+Provides thread-safe and process-safe queue management via SQLite.
 All operations are atomic and handle concurrent access from multiple processes.
 """
 
 import json
 import logging
 import sqlite3
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from stacks.coordinator.database import get_connection, row_to_dict, rows_to_list
+from stacks.constants import WORKER_HEARTBEAT_INTERVAL
+from stacks.coordinator.database import (
+    get_connection,
+    get_heartbeat_connection,
+    row_to_dict,
+    rows_to_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +30,14 @@ class QueueOperations:
     Thread-safe and process-safe queue operations via SQLite.
 
     Each method gets its own database connection to ensure process safety.
-    SQLite's WAL mode allows concurrent readers while one writer is active.
     """
+
+    def __init__(self):
+        # Heartbeats are best-effort liveness signals. Throttling here makes
+        # every caller honor the configured interval, including idle polling
+        # loops that run more frequently.
+        self._last_heartbeat_at = {}
+        self._last_heartbeat_state = {}
 
     # -------------------------------------------------------------------------
     # Adding downloads
@@ -208,10 +222,6 @@ class QueueOperations:
             """, (history_limit,))
             history = rows_to_list(cursor.fetchall())
 
-            # Get worker heartbeats
-            cursor = conn.execute("SELECT * FROM worker_heartbeats")
-            workers = rows_to_list(cursor.fetchall())
-
             # Get busy mirrors
             cursor = conn.execute("SELECT domain, worker_id FROM busy_mirrors")
             busy_mirrors = rows_to_list(cursor.fetchall())
@@ -222,6 +232,13 @@ class QueueOperations:
             )
             row = cursor.fetchone()
             paused = bool(row and row['value'] == '1')
+
+            heartbeat_conn = get_heartbeat_connection()
+            try:
+                cursor = heartbeat_conn.execute("SELECT * FROM worker_heartbeats")
+                workers = rows_to_list(cursor.fetchall())
+            finally:
+                heartbeat_conn.close()
 
             return {
                 'active': active,
@@ -472,6 +489,8 @@ class QueueOperations:
         """
         conn = get_connection()
         try:
+            resolved_filename = Path(filepath).name if filepath else None
+
             # Get the current download info (to get assigned_mirror)
             cursor = conn.execute(
                 "SELECT assigned_mirror FROM downloads WHERE md5 = ?",
@@ -500,6 +519,7 @@ class QueueOperations:
                 UPDATE downloads
                 SET status = ?,
                     success = ?,
+                    filename = COALESCE(?, filename),
                     filepath = ?,
                     error = ?,
                     used_fast_download = ?,
@@ -510,6 +530,7 @@ class QueueOperations:
             """, (
                 status,
                 1 if success else 0,
+                resolved_filename,
                 filepath,
                 error,
                 1 if used_fast_download else 0,
@@ -637,7 +658,15 @@ class QueueOperations:
             worker_type: Type of worker ('download', 'scraper', 'coordinator')
             download_id: Optional ID of current download
         """
-        conn = get_connection()
+        now = time.monotonic()
+        state = (worker_type, download_id)
+        if (
+            self._last_heartbeat_state.get(worker_id) == state
+            and now - self._last_heartbeat_at.get(worker_id, 0) < WORKER_HEARTBEAT_INTERVAL
+        ):
+            return
+
+        conn = get_heartbeat_connection()
         try:
             conn.execute("""
                 INSERT INTO worker_heartbeats (worker_id, worker_type, last_seen, current_download_id)
@@ -647,6 +676,8 @@ class QueueOperations:
                     current_download_id = excluded.current_download_id
             """, (worker_id, worker_type, datetime.now().isoformat(), download_id))
             conn.commit()
+            self._last_heartbeat_at[worker_id] = now
+            self._last_heartbeat_state[worker_id] = state
         except Exception as e:
             logger.error(f"Failed to record heartbeat: {e}")
         finally:
@@ -662,7 +693,7 @@ class QueueOperations:
         Returns:
             List of stale worker IDs
         """
-        conn = get_connection()
+        conn = get_heartbeat_connection()
         try:
             cutoff = (datetime.now() - timedelta(seconds=timeout_seconds)).isoformat()
             cursor = conn.execute("""
@@ -685,6 +716,7 @@ class QueueOperations:
             worker_id: The worker to clean up
         """
         conn = get_connection()
+        cleanup_succeeded = False
         try:
             # Release mirrors
             conn.execute(
@@ -717,13 +749,8 @@ class QueueOperations:
                 WHERE assigned_worker = ? AND status = 'scraping'
             """, (worker_id,))
 
-            # Remove heartbeat record
-            conn.execute(
-                "DELETE FROM worker_heartbeats WHERE worker_id = ?",
-                (worker_id,)
-            )
-
             conn.commit()
+            cleanup_succeeded = True
             logger.info(f"Cleaned up dead worker: {worker_id}")
 
         except Exception as e:
@@ -732,9 +759,15 @@ class QueueOperations:
         finally:
             conn.close()
 
+        # Only discard the liveness signal after durable cleanup succeeds. If
+        # the queue database is temporarily unavailable, the coordinator can
+        # retry on its next pass.
+        if cleanup_succeeded:
+            self.remove_worker_heartbeat(worker_id)
+
     def remove_worker_heartbeat(self, worker_id: str) -> None:
         """Remove a worker's heartbeat record (for clean shutdown)."""
-        conn = get_connection()
+        conn = get_heartbeat_connection()
         try:
             conn.execute(
                 "DELETE FROM worker_heartbeats WHERE worker_id = ?",
@@ -743,6 +776,8 @@ class QueueOperations:
             conn.commit()
         finally:
             conn.close()
+        self._last_heartbeat_at.pop(worker_id, None)
+        self._last_heartbeat_state.pop(worker_id, None)
 
     # -------------------------------------------------------------------------
     # History
@@ -839,6 +874,36 @@ class QueueOperations:
             logger.error(f"Failed to clear history: {e}")
             conn.rollback()
             return 0
+        finally:
+            conn.close()
+
+    def remove_history_item(self, md5: str) -> bool:
+        """
+        Remove a single completed or failed download from history.
+
+        Args:
+            md5: The MD5 hash of the history item to remove
+
+        Returns:
+            True if removed, False if not found or not a history item
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.execute("""
+                DELETE FROM downloads
+                WHERE md5 = ? AND status IN ('completed', 'failed')
+                RETURNING md5
+            """, (md5,))
+            removed = cursor.fetchone() is not None
+            conn.commit()
+
+            if removed:
+                logger.info(f"Removed history item: {md5}")
+            return removed
+        except Exception as e:
+            logger.error(f"Failed to remove history item: {e}")
+            conn.rollback()
+            return False
         finally:
             conn.close()
 

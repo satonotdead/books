@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from stacks.config.config import Config
 from stacks.constants import DOWNLOAD_PATH, PROJECT_ROOT
 from stacks.coordinator.queue_ops import QueueOperations
+from stacks.downloader.sources import filter_mirrors_for_policy
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,15 @@ def scraper_process(config_path: Path, stop_event: Event) -> None:
                     'password': config.get('proxy', 'password')
                 }
 
+                allow_external_mirrors = config.get('downloads', 'allow_external_mirrors', default=False)
+
                 downloader = AnnaDownloader(
                     output_dir=DOWNLOAD_PATH,
                     incomplete_dir=incomplete_dir,
                     flaresolverr_url=flaresolverr_url if flaresolverr_enabled else None,
                     flaresolverr_timeout=flaresolverr_timeout_ms,
-                    proxy_config=proxy_config
+                    proxy_config=proxy_config,
+                    allow_external_mirrors=allow_external_mirrors
                 )
 
             # Fetch download links
@@ -124,16 +128,23 @@ def scraper_process(config_path: Path, stop_event: Event) -> None:
                 filename, links = downloader.get_download_links(md5)
 
                 if links:
-                    # Convert links to mirror format with domain extracted
-                    for link in links:
-                        domain = _extract_domain(link.get('url', ''))
-                        mirrors.append({
-                            'url': link['url'],
-                            'type': link.get('type', 'external_mirror'),
-                            'domain': domain or link.get('domain', ''),
-                            'text': link.get('text', '')
-                        })
-                    scraper_logger.info(f"Found {len(mirrors)} mirrors for {md5}")
+                    allow_external_mirrors = config.get('downloads', 'allow_external_mirrors', default=False)
+                    links = filter_mirrors_for_policy(links, allow_external_mirrors)
+
+                    if links:
+                        # Convert links to mirror format with domain extracted
+                        for link in links:
+                            domain = _extract_domain(link.get('url', ''))
+                            mirrors.append({
+                                'url': link['url'],
+                                'type': link.get('type', 'external_mirror'),
+                                'domain': domain or link.get('domain', ''),
+                                'text': link.get('text', '')
+                            })
+                        scraper_logger.info(f"Found {len(mirrors)} mirrors for {md5}")
+                    else:
+                        error = "No allowed mirrors found"
+                        scraper_logger.warning(f"No allowed mirrors found for {md5}")
                 else:
                     error = "No mirrors found"
                     scraper_logger.warning(f"No mirrors found for {md5}")

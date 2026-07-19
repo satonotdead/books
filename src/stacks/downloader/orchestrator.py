@@ -1,5 +1,7 @@
 import random
 
+from stacks.downloader.sources import filter_mirrors_for_policy
+
 def _is_cancelled(d):
     """Check if download should be cancelled via progress callback"""
     if hasattr(d, 'progress_callback') and d.progress_callback:
@@ -62,6 +64,15 @@ def orchestrate_download(d, input_string, prefer_mirror=None, resume_attempts=3,
 
     if not links:
         d.logger.error("No download links found")
+        return False, False, None
+
+    links = filter_mirrors_for_policy(
+        links,
+        getattr(d, 'allow_external_mirrors', False)
+    )
+
+    if not links:
+        d.logger.error("No allowed download links found")
         return False, False, None
 
     d.logger.info(f"Found {len(links)} mirror(s)")

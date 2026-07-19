@@ -326,6 +326,12 @@ header img {
   background: #6272a4;
   color: #f8f8f2;
 }
+.btn-primary {
+  background: linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%);
+  color: #282a36;
+  -webkit-box-shadow: 0 8px 24px rgba(189, 147, 249, 0.35);
+          box-shadow: 0 8px 24px rgba(189, 147, 249, 0.35);
+}
 .btn-success {
   background: #50fa7b;
   color: #282a36;
@@ -518,6 +524,8 @@ header img {
           align-items: center;
   gap: 12px;
   padding: 5px;
+  -ms-flex-wrap: wrap;
+      flex-wrap: wrap;
 }
 .add-item .add-label {
   font-size: 18px;
@@ -528,12 +536,37 @@ header img {
   -webkit-box-flex: 1;
       -ms-flex: 1;
           flex: 1;
+  min-width: 220px;
   padding: 7px;
   border-radius: 6px;
   border: 1px solid #bd93f9;
   background: #181a26;
   color: #f8f8f2;
   font-size: 14px;
+}
+.add-item .btn--browse {
+  min-height: 54px;
+  padding: 12px 18px;
+  border: 2px solid rgba(248, 248, 242, 0.18);
+  font-size: 1.05em;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  display: -webkit-inline-box;
+  display: -ms-inline-flexbox;
+  display: inline-flex;
+  -webkit-box-align: center;
+      -ms-flex-align: center;
+          align-items: center;
+  -webkit-box-pack: center;
+      -ms-flex-pack: center;
+          justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.add-item .btn--browse::before {
+  font-size: 1.35em;
+  margin: 0;
 }
 
 #current-download {
@@ -810,6 +843,19 @@ footer a:hover {
 }
 .retry-btn.visible {
   display: inline-block;
+}
+
+.history-actions {
+  display: none;
+  -webkit-box-align: center;
+      -ms-flex-align: center;
+          align-items: center;
+  gap: 12px;
+}
+.history-actions.visible {
+  display: -webkit-box;
+  display: -ms-flexbox;
+  display: flex;
 }
 
 #history-list a {

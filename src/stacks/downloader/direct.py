@@ -6,6 +6,80 @@ import hashlib
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 
+
+GENERIC_URL_FILENAMES = {
+    'download',
+    'download.php',
+    'download.cgi',
+    'file',
+    'get',
+    'slow_download',
+}
+
+
+def _sanitize_filename(filename):
+    """Normalize a remote filename into something safe for the local filesystem."""
+    cleaned = Path(filename).name.strip()
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', cleaned)
+    return cleaned.rstrip('. ') or 'download.epub'
+
+
+def _extract_response_filename(response):
+    """Prefer the browser-suggested filename from Content-Disposition when present."""
+    content_disposition = response.headers.get('Content-Disposition', '')
+    if not content_disposition:
+        return None
+
+    match = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", content_disposition, re.IGNORECASE)
+    if match:
+        return _sanitize_filename(unquote(match.group(1)))
+
+    match = re.search(r'filename\s*=\s*"([^"]+)"', content_disposition, re.IGNORECASE)
+    if match:
+        return _sanitize_filename(match.group(1))
+
+    match = re.search(r'filename\s*=\s*([^;]+)', content_disposition, re.IGNORECASE)
+    if match:
+        return _sanitize_filename(match.group(1).strip().strip('"'))
+
+    return None
+
+
+def _extract_url_filename(url):
+    """Use the file-like tail of a URL when it looks more specific than a generic endpoint."""
+    if not url:
+        return None
+
+    parsed_url = urlparse(url)
+    candidate = _sanitize_filename(unquote(Path(parsed_url.path).name))
+    if not candidate:
+        return None
+
+    if candidate.lower() in GENERIC_URL_FILENAMES:
+        return None
+
+    if not Path(candidate).suffix:
+        return None
+
+    return candidate
+
+
+def _build_paths(d, filename, subfolder=None):
+    """Build final and temp paths for a resolved filename."""
+    if subfolder:
+        output_dir = d.output_dir / subfolder.lstrip('/')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        base_final_path = output_dir / filename
+    else:
+        base_final_path = d.output_dir / filename
+
+    final_path = d.get_unique_filename(base_final_path)
+    # Ensure incomplete directory exists (may have been removed or not created
+    # if a Docker volume mount replaces the directory after initialisation)
+    d.incomplete_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = d.incomplete_dir / f"{final_path.name}.part"
+    return final_path, temp_path
+
 def calculate_md5(filepath):
     """Calculate MD5 hash of a file."""
     hash_md5 = hashlib.md5()
@@ -28,16 +102,18 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
         subfolder: Subfolder path to save file to (optional)
     """
     try:
-        # Determine filename
-        if not title:
+        url_filename = _extract_url_filename(download_url)
+        title_filename = _sanitize_filename(title) if title else None
+
+        # Determine fallback filename before making the request.
+        if url_filename:
+            filename = url_filename
+        elif title_filename:
+            filename = title_filename
+        else:
             d.logger.warning("No title provided, extracting from URL")
             parsed_url = urlparse(download_url)
-            filename = unquote(Path(parsed_url.path).name)
-            if not filename:
-                filename = 'download.epub'  # Default fallback
-        else:
-            # Clean filename (remove invalid characters)
-            filename = re.sub(r'[<>:"/\\|?*]', '_', title)
+            filename = _sanitize_filename(unquote(Path(parsed_url.path).name))
 
         # Validate extension - warn if suspicious but don't modify
         from stacks.constants import LEGAL_FILES
@@ -48,24 +124,11 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
             filename = filename + '.epub'
         elif file_ext not in LEGAL_FILES:
             d.logger.warning(f"Unusual file extension: {file_ext} (not in known legal files list)")
-        
-        # Get unique path (with subfolder if specified)
-        if subfolder:
-            # Create subfolder if it doesn't exist
-            output_dir = d.output_dir / subfolder.lstrip('/')
-            output_dir.mkdir(parents=True, exist_ok=True)
-            base_final_path = output_dir / filename
-        else:
-            base_final_path = d.output_dir / filename
-        final_path = d.get_unique_filename(base_final_path)
-        temp_path = d.incomplete_dir / f"{final_path.name}.part"
-        
-        # Check for partial download
+
+        resolved_filename = filename
+        final_path, temp_path = _build_paths(d, resolved_filename, subfolder)
         downloaded = 0
-        if temp_path.exists() and supports_resume:
-            downloaded = temp_path.stat().st_size
-            d.logger.info(f"Found partial file: {downloaded}/{total_size if total_size else '?'} bytes")
-        
+
         # Download with resume
         for attempt in range(resume_attempts):
             try:
@@ -75,6 +138,24 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                     d.logger.info(f"Resuming from byte {downloaded}")
 
                 response = d.session.get(download_url, headers=headers, stream=True, timeout=30)
+
+                response_filename = _extract_response_filename(response)
+                final_url_filename = _extract_url_filename(response.url)
+                preferred_filename = response_filename or final_url_filename
+
+                if preferred_filename:
+                    if preferred_filename != resolved_filename:
+                        source = "server" if response_filename else "final URL"
+                        d.logger.info(f"Using browser-suggested filename from {source}: {preferred_filename}")
+                    resolved_filename = preferred_filename
+                    final_path, temp_path = _build_paths(d, resolved_filename, subfolder)
+
+                if supports_resume and downloaded == 0 and temp_path.exists():
+                    downloaded = temp_path.stat().st_size
+                    d.logger.info(f"Found partial file: {downloaded}/{total_size if total_size else '?'} bytes")
+                    response.close()
+                    headers['Range'] = f'bytes={downloaded}-'
+                    response = d.session.get(download_url, headers=headers, stream=True, timeout=30)
 
                 if downloaded > 0 and response.status_code not in [200, 206]:
                     d.logger.warning(f"Resume not supported (status {response.status_code}), starting fresh")

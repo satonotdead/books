@@ -117,6 +117,10 @@ def _apply_default(default, key, old_value):
         case "FLARESOLVERR":
             default = os.environ.get("SOLVERR_URL", None)
             logger.warning(f"FlareSolverr URL is invalid Resetting back to '{default}'.")
+        case "FLARESOLVERR_ENABLED":
+            default = bool(os.environ.get("SOLVERR_URL"))
+            if default:
+                logger.info("FlareSolverr enabled from SOLVERR_URL environment variable.")
     return default
 
 def _validate_value(value, rules, key, section=None, normalized=None):

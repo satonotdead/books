@@ -72,6 +72,8 @@ def is_zlib_domain(url):
         'z-lib.fm',
         'z-lib.org',
         'z-lib.is',
+        'z-lib.gd',
+        'z-lib.se',
         'singlelogin.re',
         'singlelogin.se',
     ]

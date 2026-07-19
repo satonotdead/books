@@ -1,12 +1,17 @@
 """
 SQLite database setup and connection management for the download queue.
 
-Uses WAL mode for concurrent read/write access from multiple processes.
+Uses a conservative journal mode by default because Docker Desktop bind
+mounts can behave poorly with SQLite WAL shared-memory files. Ephemeral worker
+heartbeats live in a separate runtime database so health checks do not keep the
+persistent configuration volume busy while Stacks is idle.
 """
 
+import os
 import sqlite3
 import json
 import logging
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -16,6 +21,20 @@ logger = logging.getLogger(__name__)
 
 # Database file path
 DATABASE_PATH = CONFIG_PATH / "queue.db"
+DEFAULT_JOURNAL_MODE = "DELETE"
+ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
+
+
+def _default_runtime_path() -> Path:
+    """Return a non-persistent location for frequently updated runtime state."""
+    shared_memory = Path("/dev/shm")
+    if shared_memory.is_dir() and os.access(shared_memory, os.W_OK):
+        return shared_memory / "stacks"
+    return Path(tempfile.gettempdir()) / "stacks"
+
+
+RUNTIME_PATH = Path(os.environ.get("STACKS_RUNTIME_PATH", _default_runtime_path()))
+HEARTBEAT_DATABASE_PATH = RUNTIME_PATH / "heartbeats.db"
 
 # Database schema
 SCHEMA_SQL = """
@@ -67,7 +86,8 @@ CREATE TABLE IF NOT EXISTS busy_mirrors (
     claimed_at TEXT NOT NULL
 );
 
--- Worker heartbeats (for health monitoring)
+-- Legacy heartbeat table retained for existing database compatibility.
+-- Live heartbeats are stored in HEARTBEAT_DATABASE_PATH.
 CREATE TABLE IF NOT EXISTS worker_heartbeats (
     worker_id TEXT PRIMARY KEY,
     worker_type TEXT NOT NULL,  -- 'download', 'scraper', 'coordinator'
@@ -90,14 +110,32 @@ CREATE TABLE IF NOT EXISTS system_flags (
 );
 """
 
+HEARTBEAT_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+    worker_id TEXT PRIMARY KEY,
+    worker_type TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    current_download_id INTEGER
+);
+"""
+
+
+def _configured_journal_mode() -> str:
+    """Return a validated persistent-database journal mode."""
+    journal_mode = os.environ.get("STACKS_SQLITE_JOURNAL_MODE", DEFAULT_JOURNAL_MODE).upper()
+    if journal_mode not in ALLOWED_JOURNAL_MODES:
+        logger.warning(
+            f"Invalid STACKS_SQLITE_JOURNAL_MODE '{journal_mode}', falling back to {DEFAULT_JOURNAL_MODE}"
+        )
+        return DEFAULT_JOURNAL_MODE
+    return journal_mode
+
 
 def get_connection() -> sqlite3.Connection:
     """
-    Get a database connection with WAL mode enabled.
+    Get a connection to the persistent queue database.
 
     Each call returns a new connection. Caller is responsible for closing it.
-    WAL mode allows concurrent readers while one writer is active.
-
     Returns:
         sqlite3.Connection with row_factory set to sqlite3.Row
     """
@@ -105,11 +143,33 @@ def get_connection() -> sqlite3.Connection:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(str(DATABASE_PATH), timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout for locks
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_heartbeat_connection() -> sqlite3.Connection:
+    """Get a connection to ephemeral worker-health state."""
+    HEARTBEAT_DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(HEARTBEAT_DATABASE_PATH), timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_heartbeat_database() -> None:
+    """Initialize the runtime database in tmpfs (or the system temp dir)."""
+    conn = get_heartbeat_connection()
+    try:
+        # WAL provides cheap concurrent reads/writes; all of its files are
+        # ephemeral and live outside the persistent config bind mount.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(HEARTBEAT_SCHEMA_SQL)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def init_database():
@@ -120,6 +180,10 @@ def init_database():
     """
     conn = get_connection()
     try:
+        # Journal mode is persistent database metadata. Set it once during
+        # single-process startup instead of on every connection, where it can
+        # contend with active readers/writers and raise "database is locked".
+        conn.execute(f"PRAGMA journal_mode={_configured_journal_mode()}")
         conn.executescript(SCHEMA_SQL)
 
         # Add columns to existing databases that predate them
@@ -134,6 +198,7 @@ def init_database():
                 pass  # Column already exists
 
         conn.commit()
+        init_heartbeat_database()
         logger.info(f"Database initialized at {DATABASE_PATH}")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
@@ -185,6 +250,15 @@ def startup_cleanup():
         conn.rollback()
     finally:
         conn.close()
+
+    # Runtime heartbeats are not durable state. Clear any entries that remain
+    # when restarting a source installation without rebooting the host.
+    heartbeat_conn = get_heartbeat_connection()
+    try:
+        heartbeat_conn.execute("DELETE FROM worker_heartbeats")
+        heartbeat_conn.commit()
+    finally:
+        heartbeat_conn.close()
 
 
 def migrate_from_json():

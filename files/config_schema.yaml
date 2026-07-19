@@ -53,6 +53,9 @@ downloads:
   include_hash:
     types: [INCLUDE_HASH]
     default: "none"
+  allow_external_mirrors:
+    types: [BOOL]
+    default: false
   incomplete_folder_path:
     types: [PATH]
     default: "/download/incomplete"
@@ -73,7 +76,7 @@ fast_download:
 flaresolverr:
   enabled:
     types: [BOOL]
-    default: false
+    default: FLARESOLVERR_ENABLED
   url:
     types: [IP, URL, NULL]
     default: FLARESOLVERR

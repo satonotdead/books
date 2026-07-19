@@ -445,6 +445,26 @@ function retryFailed(md5) {
     .catch((err) => console.error("Failed to retry download:", err));
 }
 
+function removeFromHistory(md5) {
+  apiFetch("/api/history/remove", {
+    method: "POST",
+    body: JSON.stringify({ md5: md5 }),
+  })
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.success) {
+        updateStatus();
+      } else {
+        toasts.show({
+          title: "History",
+          message: data.message || "Failed to remove item",
+          type: "error",
+        });
+      }
+    })
+    .catch((err) => console.error("Failed to remove history item:", err));
+}
+
 // ============================================================================
 // API FUNCTIONS - SETTINGS
 // ============================================================================
@@ -909,7 +929,7 @@ function updateHistoryList(history) {
       statusIcon.setAttribute("data-icon", "close");
       statusIcon.className = "item-status-icon error-icon";
     }
-    clone.querySelector(".item-link").href = "https://annas-archive.gl/md5/" + item.md5;
+    clone.querySelector(".item-link").href = "/aa/md5/" + item.md5;
     // Title - filename or MD5
     const displayName = item.filename || item.md5;
     clone.querySelector(".item-title-text").textContent = displayName;
@@ -947,9 +967,9 @@ function updateHistoryList(history) {
 
     // Retry button
     if (!item.success) {
+      clone.querySelector(".history-actions").classList.add("visible");
       const retryBtn = clone.querySelector(".retry-btn");
       retryBtn.style.display = "inline-block";
-      retryBtn.onclick = () => retryFailed(item.md5);
     }
 
     historyList.appendChild(clone);
@@ -963,16 +983,21 @@ function updateHistoryList(history) {
 // Global click handler for retry buttons (event delegation for firefox)
 document.addEventListener('click', (event) => {
   const retryBtn = event.target.closest('.retry-btn');
-  if (!retryBtn) return;
+  const removeBtn = event.target.closest('.remove-history-btn');
+  if (!retryBtn && !removeBtn) return;
 
-  const listItem = retryBtn.closest('.list-item');
+  const listItem = (retryBtn || removeBtn).closest('.list-item');
   const md5El = listItem?.querySelector('.item-md5');
   const md5 = md5El?.textContent?.trim();
 
   if (md5) {
-    retryFailed(md5);
+    if (retryBtn) {
+      retryFailed(md5);
+    } else {
+      removeFromHistory(md5);
+    }
   } else {
-    console.error('Retry button clicked but MD5 could not be found');
+    console.error('History action clicked but MD5 could not be found');
   }
 });
 

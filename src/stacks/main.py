@@ -99,6 +99,19 @@ def init_database():
     sys.stdout.flush()
 
 
+def prime_config(config_path: str):
+    """Validate and persist config once before spawning other processes."""
+    from stacks.config.config import Config
+
+    Config(config_path)
+
+    # RESET_ADMIN is intended as a one-shot bootstrap action.
+    # Clear it after the first config write to avoid every child process
+    # re-hashing credentials and racing on config.yaml during startup.
+    if os.environ.get("RESET_ADMIN", "").lower() == "true":
+        os.environ.pop("RESET_ADMIN", None)
+
+
 def setup_signal_handlers_multiprocess():
     """Setup graceful shutdown handlers for multi-process mode."""
     def shutdown_handler(signum, frame):
@@ -240,6 +253,12 @@ def start_gunicorn(config_path: str):
 def main():
     global _process_manager, _gunicorn_process
 
+    # Use a clean interpreter for workers instead of inheriting the
+    # parent's process state. This avoids hard-to-debug child crashes
+    # on some container/runtime combinations.
+    if multiprocessing.get_start_method(allow_none=True) != "spawn":
+        multiprocessing.set_start_method("spawn", force=True)
+
     parser = argparse.ArgumentParser(description="Start the Stacks server.")
     parser.add_argument(
         "-c", "--config",
@@ -276,6 +295,9 @@ def main():
 
     # Determine debug mode from CLI arg or environment variable
     debug_mode = args.debug or os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true")
+
+    # Normalize config once in the parent process before any child processes start.
+    prime_config(config_path)
 
     if debug_mode:
         # Debug mode: use old single-process architecture with Flask dev server

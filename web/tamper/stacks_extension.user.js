@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stacks - Anna's Archive Downloader
 // @namespace    http://tampermonkey.net/
-// @version      1.3.0
+// @version      1.4.0
 // @description  Add download buttons to Anna's Archive that queue downloads to Stacks server
 // @author       Zelest Carlyone
 // @include      https://annas-archive.*/*

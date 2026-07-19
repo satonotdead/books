@@ -99,6 +99,6 @@ If you forget your password:
      - RESET_ADMIN=true
      - PASSWORD=new_password
    ```
-3. Restart the container with `docker compose up` or `./build.sh`
+3. Restart the container with `docker compose up` or `./build-and-launch.sh`
 4. Log in with the new password
 5. Remove `RESET_ADMIN=true` from docker-compose.yml

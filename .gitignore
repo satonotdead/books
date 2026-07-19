@@ -51,3 +51,4 @@ publish.sh
 RELEASE_CHECKLIST.md
 todo.md
 /homepage-widget/
+stacks-*-linux-amd64-docker-image.tar

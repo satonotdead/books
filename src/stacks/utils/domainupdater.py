@@ -4,6 +4,8 @@ import logging
 import re
 from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
+
 logger = logging.getLogger('domainupdater')
 
 WIKIPEDIA_URL = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
@@ -32,30 +34,31 @@ def fetch_annas_archive_domains():
         logger.warning(f"Failed to fetch domains from Wikipedia: {e}")
         return []
 
-    pattern_table = re.compile(
-        r'<table[^>]*class="[^"]*infobox vcard[^"]*"[^>]*>(.*?)(?:<h2|</table)',
-        re.DOTALL | re.IGNORECASE
-    )
-    pattern_span = re.compile(
-        r'<span[^>]*class="[^"]*url[^"]*"[^>]*>(.*?)</span>',
-        re.DOTALL | re.IGNORECASE
-    )
-    pattern_link = re.compile(
-        r'<a[^>]*class="[^"]*external text[^"]*"[^>]*href="([^"]+)"',
-        re.IGNORECASE
-    )
-
-    table_match = pattern_table.search(response.text)
-    if not table_match:
-        logger.warning("Could not find infobox table in Wikipedia page")
-        return []
-
+    soup = BeautifulSoup(response.text, "html.parser")
     domains = []
-    for span_html in pattern_span.findall(table_match.group(0)):
-        for href in pattern_link.findall(span_html):
-            parsed = urlparse(href if '://' in href else 'https:' + href)
-            if parsed.netloc:
-                domains.append(parsed.netloc)
+
+    infobox = soup.select_one("table.infobox")
+    search_root = infobox if infobox else soup
+
+    for anchor in search_root.find_all("a", href=True):
+        href = anchor["href"]
+        if "annas-archive." not in href:
+            continue
+
+        parsed = urlparse(href if "://" in href else f"https:{href}")
+        domain = parsed.netloc.lower().split(":")[0]
+        if domain.startswith("www."):
+            domain = domain[4:]
+        if domain.startswith("annas-archive."):
+            domains.append(domain)
+
+    page_text = " ".join(soup.get_text(" ", strip=True).split())
+    current_match = re.search(r"\bcurrently\b(?P<mirrors>.*?)(?:\.\s|\[\s*†|\Z)", page_text, re.IGNORECASE)
+    if current_match:
+        for tld in re.findall(r"\.[a-z]{2,10}\b", current_match.group("mirrors").lower()):
+            domains.append(f"annas-archive{tld}")
+
+    domains = list(dict.fromkeys(domains))
 
     logger.info(f"Fetched {len(domains)} domain(s) from Wikipedia: {domains}")
     return domains

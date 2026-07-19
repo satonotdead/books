@@ -104,6 +104,16 @@
   }
 }
 
+.history-actions {
+  display: none;
+  align-items: center;
+  gap: $spacing-sm;
+
+  &.visible {
+    display: flex;
+  }
+}
+
 #history-list a {
   color: $pink;
   transition: color 0.2s ease-in-out;

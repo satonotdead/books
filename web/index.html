@@ -51,6 +51,7 @@
           <div class="card input-row">
             <input type="text" id="manual-add" placeholder="Enter an Anna's Archive MD5 or URL..." maxlength="256" />
             <button data-icon="file-add-line" class="btn btn-success"></button>
+            <a href="/aa/" class="btn btn-primary btn--browse" data-icon="book-2">Browse Anna Proxy</a>
           </div>
         </div>
 
@@ -342,7 +343,7 @@
       </div>
 
       <footer>
-        <p><a href="./tamper/stacks_extension.user.js" target="_blank" data-icon="tampermonkey">Install Tampermonkey Script</a> • <a href="https://github.com/zelestcarlyone/stacks-docker" target="_blank" data-icon="github">Visit GitHub</a></p>
+        <p><a href="/aa/" data-icon="book-2">Open Anna Proxy</a> • <a href="https://github.com/zelestcarlyone/stacks-docker" target="_blank" data-icon="github">Visit GitHub</a></p>
       </footer>
     </div>
 
@@ -390,7 +391,10 @@
           <div class="item-time"></div>
           <div class="item-error"></div>
         </div>
-        <button class="btn btn-secondary retry-btn" data-icon="file-add-line" onclick=""></button>
+        <div class="history-actions">
+          <button class="btn btn-secondary retry-btn" data-icon="file-add-line" title="Add to queue" onclick=""></button>
+          <button class="btn btn-danger remove-history-btn" data-icon="delete-bin-line" title="Remove" onclick=""></button>
+        </div>
       </div>
     </template>
 

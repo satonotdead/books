@@ -22,6 +22,12 @@
     color: $foreground;
   }
 
+  &-primary {
+    background: linear-gradient(135deg, $purple 0%, $pink 100%);
+    color: $bg;
+    box-shadow: 0 8px 24px rgba(189, 147, 249, 0.35);
+  }
+
   &-success {
     background: $green;
     color: $bg;

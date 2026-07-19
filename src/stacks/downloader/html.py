@@ -1,9 +1,23 @@
 import re
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, parse_qs, urlencode
 from bs4 import BeautifulSoup
 from stacks.downloader.sites.zlib import parse_zlib_download_link, is_zlib_domain
+from stacks.downloader.sites.libgen import parse_libgen_download_link, is_libgen_domain
 from stacks.constants import LEGAL_FILES, ANNAS_ARCHIVE_DOMAINS
 from stacks.utils.domainutils import get_working_domain, try_domains_until_success
+
+# Known mirrors that are JavaScript SPAs (Nuxt.js etc.) — their HTML is an empty
+# shell with no static download links. We skip them early to avoid wasting time.
+JS_SPA_MIRROR_DOMAINS = [
+    'libgen.pw',
+    'randombook.org',
+]
+
+# Known dead mirrors (permanently returning errors)
+DEAD_MIRROR_DOMAINS = [
+    'z-lib.gd',    # Returns 503 Service Unavailable
+    'libstc.cc',   # DNS resolution failure (domain dead)
+]
 
 def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
         """
@@ -29,6 +43,14 @@ def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
                     return download_link
                 d.logger.debug("Z-Library scraper didn't find link, falling back to generic parser")
 
+            # Libgen sites (libgen.li, etc.)
+            if is_libgen_domain(mirror_url):
+                d.logger.debug("Using Libgen specific scraper")
+                download_link = parse_libgen_download_link(d, html_content, mirror_url)
+                if download_link:
+                    return download_link
+                d.logger.debug("Libgen scraper didn't find link, falling back to generic parser")
+
         # Fall back to generic parsing
         soup = BeautifulSoup(html_content, 'html.parser')
         
@@ -53,16 +75,19 @@ def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
         for link in soup.find_all('a', href=True):
             href = link['href']
 
-            # Must be absolute URL
-            if not href.startswith('http'):
+            # Skip slow_download pages (we want the ACTUAL file, not another slow_download page)
+            if 'slow_download' in href.lower():
                 continue
+
+            # Resolve relative URLs against the mirror URL if available
+            if not href.startswith('http'):
+                if mirror_url:
+                    href = urljoin(mirror_url, href)
+                else:
+                    continue
 
             # Skip navigation/social links and .onion URLs
             if any(skip in href.lower() for skip in skip_domains):
-                continue
-
-            # Skip slow_download pages (we want the ACTUAL file, not another slow_download page)
-            if 'slow_download' in href.lower():
                 continue
 
             # Download links contain the MD5 prefix
@@ -70,14 +95,17 @@ def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
                 d.logger.debug(f"Found download link with MD5 prefix: {href}")
                 return href
         
-        # Method 2: Fallback for external mirrors - look for file extensions
+        # Method 2: Fallback for external mirrors - look for file extensions and download indicators
         for link in soup.find_all('a', href=True):
             href = link['href']
             link_text = link.get_text().strip().lower()
             
-            # Must be absolute URL
+            # Resolve relative URLs against the mirror URL if available
             if not href.startswith('http'):
-                continue
+                if mirror_url:
+                    href = urljoin(mirror_url, href)
+                else:
+                    continue
             
             # Skip navigation
             if any(skip in href.lower() for skip in skip_domains):
@@ -281,10 +309,31 @@ def _get_download_links_single_domain(d, md5, domain):
                     d.logger.debug(f"Added no-waitlist server: {server_name}")
         
         # External mirrors - look in js-show-external ul
+        # Note: Anna's Archive changed the HTML structure — the UL now also has a
+        # 'hidden' class that is toggled by JS. We must still find it regardless.
         external_ul = downloads_panel.find('ul', class_='js-show-external')
+        if not external_ul:
+            # Fallback: search all ULs for one with js-show-external in class list
+            for ul in downloads_panel.find_all('ul'):
+                if 'js-show-external' in ul.get('class', []):
+                    external_ul = ul
+                    break
         if external_ul:
             for a in external_ul.find_all('a', href=True):
                 href = a['href']
+
+                # Handle IPFS download links (relative URLs on Anna's Archive)
+                if href.startswith('/ipfs_downloads/'):
+                    # Convert relative IPFS link to absolute URL using the current domain
+                    full_ipfs_url = urljoin(url, href)
+                    links.append({
+                        'url': full_ipfs_url,
+                        'domain': domain,
+                        'text': 'IPFS',
+                        'type': 'slow_download'  # IPFS is also behind DDoS-Guard
+                    })
+                    d.logger.debug(f"Added IPFS download mirror")
+                    continue
 
                 # Only add absolute URLs
                 if not href.startswith('http'):
@@ -296,19 +345,29 @@ def _get_download_links_single_domain(d, md5, domain):
                     continue
 
                 parsed = urlparse(href)
-                domain = parsed.netloc
+                mirror_domain = parsed.netloc
 
                 # Skip if no valid domain
-                if not domain:
+                if not mirror_domain:
+                    continue
+
+                # Skip known dead mirrors (permanently returning 5xx errors)
+                if any(mirror_domain == dead or mirror_domain.endswith('.' + dead) for dead in DEAD_MIRROR_DOMAINS):
+                    d.logger.debug(f"Skipping known dead mirror: {mirror_domain}")
+                    continue
+
+                # Skip known JS SPA mirrors (no static download links in HTML)
+                if any(mirror_domain == spa or mirror_domain.endswith('.' + spa) for spa in JS_SPA_MIRROR_DOMAINS):
+                    d.logger.debug(f"Skipping JS SPA mirror (no static links): {mirror_domain}")
                     continue
 
                 links.append({
                     'url': href,
-                    'domain': domain,
-                    'text': domain,
+                    'domain': mirror_domain,
+                    'text': mirror_domain,
                     'type': 'external_mirror'
                 })
-                d.logger.debug(f"Added external mirror: {domain}")
+                d.logger.debug(f"Added external mirror: {mirror_domain}")
 
         return filename, links
 
