@@ -14,12 +14,14 @@ from stacks.utils.domainutils import try_domains_until_success
 from stacks.security.auth import (
     require_auth_with_permissions,
     hash_password,
+    rate_limit_by_ip,
 )
 
 logger = logging.getLogger("api")
 
 @api_bp.route('/api/config/test_flaresolverr', methods=['POST'])
 @require_auth_with_permissions(allow_downloader=False)
+@rate_limit_by_ip(max_attempts=10, window_seconds=60)
 def api_config_test_flaresolverr():
     """Test FlareSolverr connection"""
     data = request.json
@@ -73,6 +75,7 @@ def api_config_test_flaresolverr():
 
 @api_bp.route('/api/config/test_proxy', methods=['POST'])
 @require_auth_with_permissions(allow_downloader=False)
+@rate_limit_by_ip(max_attempts=10, window_seconds=60)
 def api_config_test_proxy():
     """Test proxy connection"""
     data = request.json
@@ -108,19 +111,18 @@ def api_config_test_proxy():
             'https': proxy_url
         }
 
-        # Test by making a request to a reliable endpoint
+        # Test by making a request to Anna's Archive through the proxy.
+        # This avoids leaking the proxy's external IP to a third-party service.
         response = requests.get(
-            'https://httpbin.org/ip',
+            'https://annas-archive.gl',
             proxies=proxies,
             timeout=10
         )
 
         if response.status_code == 200:
-            result = response.json()
             return jsonify({
                 'success': True,
-                'message': f'Proxy is working. External IP: {result.get("origin", "unknown")}',
-                'external_ip': result.get('origin')
+                'message': 'Proxy is working and can reach Anna\'s Archive'
             })
         else:
             return jsonify({
@@ -188,6 +190,7 @@ def _test_key_single_domain(test_key, domain):
 
 @api_bp.route('/api/config/test_key', methods=['POST'])
 @require_auth_with_permissions(allow_downloader=False)
+@rate_limit_by_ip(max_attempts=10, window_seconds=60)
 def api_config_test_key():
     """Test fast download key and update cached info"""
     data = request.json
@@ -262,6 +265,13 @@ def api_config_update():
         for section, values in data.items():
             if isinstance(values, dict):
                 for key, new_value in values.items():
+                    # Reject keys not defined in the schema to prevent config injection
+                    if section not in config.schema or key not in config.schema[section]:
+                        return jsonify({
+                            "success": False,
+                            "error": f"Invalid config key: {section}.{key}"
+                        }), 400
+
                     # Special handling for password updates
                     if section == 'login' and key == 'new_password':
                         if new_value:  # Only update if new password is provided

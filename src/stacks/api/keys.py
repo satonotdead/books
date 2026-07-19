@@ -11,6 +11,7 @@ from stacks.security.auth import (
     require_session_only,
     generate_secret_key,
     validate_api_key,
+    rate_limit_by_ip,
 )
 
 logger = logging.getLogger("api")
@@ -119,6 +120,7 @@ def api_key_info():
 
 @api_bp.route('/api/key/test', methods=['POST'])
 @require_session_only
+@rate_limit_by_ip(max_attempts=10, window_seconds=60)
 def api_key_test():
     """
     Test an API key and return its type.

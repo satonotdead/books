@@ -13,6 +13,9 @@ logger = logging.getLogger("auth")
 login_attempts: dict[str, list[datetime]] = {}
 login_lockouts: dict[str, datetime] = {}
 
+# Generic per-IP rate limiting for non-login endpoints (in-memory only)
+generic_attempts: dict[str, list[datetime]] = {}
+
 def generate_secret_key():
     """Generate 192bit secret key"""
     alphabet = string.ascii_letters + string.digits + "-_"
@@ -257,3 +260,33 @@ def require_session_only(f):
             401,
         )
     return wrapper
+
+
+def rate_limit_by_ip(max_attempts=10, window_seconds=60):
+    """
+    Simple in-memory rate limiter for non-login endpoints.
+    Limits each IP to `max_attempts` requests within `window_seconds`.
+    Note: this is process-local and will not share state across workers.
+    """
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            ip = request.remote_addr or "unknown"
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=window_seconds)
+
+            # Keep only attempts within the window
+            attempts = generic_attempts.get(ip, [])
+            attempts = [t for t in attempts if t > cutoff]
+            generic_attempts[ip] = attempts
+
+            if len(attempts) >= max_attempts:
+                return jsonify({
+                    "success": False,
+                    "error": f"Too many requests. Try again in {window_seconds} seconds."
+                }), 429
+
+            generic_attempts[ip].append(now)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
