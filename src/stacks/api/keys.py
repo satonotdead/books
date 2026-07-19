@@ -118,6 +118,7 @@ def api_key_info():
     })
 
 @api_bp.route('/api/key/test', methods=['POST'])
+@require_session_only
 def api_key_test():
     """
     Test an API key and return its type.
