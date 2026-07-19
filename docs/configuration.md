@@ -68,6 +68,12 @@ environment:
 
 **Best Practice:** Create a `.env` file to store sensitive values separately from the `docker-compose.yml` file. This keeps secrets out of version control and makes configuration easier to manage.
 
+**Security:** Always use strong, randomly generated passwords. Generate a secure password using:
+```bash
+openssl rand -base64 32
+```
+Never use default or predictable passwords in production.
+
 ## Network Access
 
 To access Stacks from other devices on your network, the default configuration already exposes the port. Simply access it using your server's IP address:

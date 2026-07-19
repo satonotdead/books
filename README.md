@@ -81,7 +81,8 @@ You can deploy it with either **Docker Compose** or the **Docker CLI**.
     # These only apply on first run, afterward edit config.yaml directly
     # or update the configuration from the UI.
     # For security, use a .env file to store sensitive values:
-    # Create a .env file with: USERNAME=admin, PASSWORD=your_secure_password
+    # Create a .env file with: USERNAME=admin, PASSWORD=generate_secure_password
+    # Generate a secure password: openssl rand -base64 32
     - USERNAME=${USERNAME:-admin} # Default admin username (change if desired)
     - PASSWORD=${PASSWORD} # Default admin password - CHANGE THIS!
 
