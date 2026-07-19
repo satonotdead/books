@@ -50,6 +50,9 @@ class Config:
             with open(self.config_path, "w") as f:
                 yaml.dump(self.data, f, default_flow_style=False, sort_keys=False)
                 logger.debug("Saved config file.")
+            
+            # Set secure permissions on config file
+            self._set_secure_permissions()
 
     def validate(self, data, schema):
         """Invoke the schema-validator to normalize the config."""
@@ -88,3 +91,12 @@ class Config:
         """Get entire config as dict"""
         with self.lock:
             return self.data.copy()
+    
+    def _set_secure_permissions(self):
+        """Set secure file permissions on config file"""
+        import os
+        try:
+            # Set read/write for owner only (600 permissions)
+            os.chmod(self.config_path, 0o600)
+        except Exception as e:
+            logger.warning(f"Could not set secure permissions on config file: {e}")

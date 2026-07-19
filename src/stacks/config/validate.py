@@ -123,6 +123,43 @@ def _apply_default(default, key, old_value):
                 logger.info("FlareSolverr enabled from SOLVERR_URL environment variable.")
     return default
 
+def _is_strong_secret_key(key):
+    """Check if a secret key has sufficient entropy/randomness"""
+    import string
+    import math
+    
+    if not isinstance(key, str) or len(key) < 32:
+        return False
+    
+    # Check character diversity
+    has_upper = any(c.isupper() for c in key)
+    has_lower = any(c.islower() for c in key)
+    has_digits = any(c.isdigit() for c in key)
+    has_special = any(c in '_-' for c in key)
+    
+    # Require at least 3 different character types
+    diversity_score = sum([has_upper, has_lower, has_digits, has_special])
+    if diversity_score < 3:
+        return False
+    
+    # Basic entropy check - calculate Shannon entropy
+    # Count frequency of each character
+    char_counts = {}
+    for c in key:
+        char_counts[c] = char_counts.get(c, 0) + 1
+    
+    # Calculate entropy
+    entropy = 0
+    key_len = len(key)
+    for count in char_counts.values():
+        freq = count / key_len
+        entropy -= freq * math.log2(freq)
+    
+    # Require minimum entropy (higher is better)
+    min_entropy = 3.0  # Reasonable threshold for randomness
+    return entropy >= min_entropy
+
+
 def _validate_value(value, rules, key, section=None, normalized=None):
     allowed_types = rules.get("types", [])
     default = rules.get("default")
@@ -152,6 +189,13 @@ def _validate_value(value, rules, key, section=None, normalized=None):
             case "SECRET_KEY":
                 if isinstance(value, str):
                     if RE_SECRET_KEY.fullmatch(value):
+                        # Additional validation for session secret to ensure it's strong
+                        if key == 'session_secret':
+                            if _is_strong_secret_key(value):
+                                return value
+                            else:
+                                logger.warning(f"Weak session secret detected, regenerating for {key}")
+                                return _apply_default(default, key, value)
                         return value
             case "IP":
                 if isinstance(value, str):

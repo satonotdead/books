@@ -113,10 +113,20 @@ def api_key_downloader_disable():
 def api_key_info():
     """Get API keys (session auth only - for web UI)"""
     config = current_app.stacks_config
+    admin_key = config.get('api', 'key')
+    downloader_key = config.get('api', 'downloader_key', default=None)
+    
     return jsonify({
-        'api_key': config.get('api', 'key'),
-        'downloader_key': config.get('api', 'downloader_key', default=None)
+        'api_key': mask_api_key(admin_key),
+        'downloader_key': mask_api_key(downloader_key) if downloader_key else None
     })
+
+
+def mask_api_key(key):
+    """Mask API key to show only first and last 4 characters"""
+    if not key or len(key) <= 8:
+        return key
+    return f"{key[:4]}****{key[-4:]}"
 
 @api_bp.route('/api/key/test', methods=['POST'])
 @require_session_only

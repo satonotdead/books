@@ -34,6 +34,13 @@ def api_config_test_flaresolverr():
             'error': 'No URL provided'
         }), 400
 
+    # Validate URL to prevent SSRF attacks
+    if not _is_safe_flaresolverr_url(test_url):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid FlareSolverr URL format'
+        }), 400
+
     # Normalize URL: add http:// if no scheme is present
     if not test_url.startswith(('http://', 'https://')):
         test_url = f"http://{test_url}"
@@ -73,6 +80,75 @@ def api_config_test_flaresolverr():
         }), 500
 
 
+def _is_safe_flaresolverr_url(url):
+    """Validate FlareSolverr URL to prevent SSRF attacks"""
+    from urllib.parse import urlparse
+    import re
+    
+    # Basic format check
+    if not isinstance(url, str) or len(url) > 2048:
+        return False
+        
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or parsed.netloc.split(':')[0]
+        
+        # Check for IP addresses and hostnames
+        if not hostname:
+            return False
+            
+        # For FlareSolverr, we allow localhost and typical local addresses
+        # but block private IP ranges that aren't typically used for FlareSolverr
+        if hostname.lower() in ['localhost', '127.0.0.1', '::1']:
+            return True  # Allow localhost addresses
+            
+        # Allow private IPs on common ports for FlareSolverr
+        if _is_private_ip_no_loopback(hostname):
+            # Allow common FlareSolverr ports
+            port = parsed.port or (8191 if parsed.scheme == 'http' else 443 if parsed.scheme == 'https' else None)
+            if port in [8191, 8192, 80, 443, 8080, 8443]:
+                return True
+            return False
+            
+        # Validate hostname format
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-_.]*[a-zA-Z0-9]$', hostname) and \
+           not re.match(r'^(\d{1,3}\.){3}\d{1,3}$', hostname):
+            return False
+            
+        # Check port range if specified
+        if parsed.port and (parsed.port < 1 or parsed.port > 65535):
+            return False
+            
+        # Only allow safe schemes
+        return parsed.scheme in ['', 'http', 'https']
+        
+    except Exception:
+        return False
+
+
+def _is_private_ip_no_loopback(hostname):
+    """Check if hostname resolves to a private IP address (excluding loopback)"""
+    import socket
+    import ipaddress
+    
+    try:
+        # If it's already an IP address
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private and not ip.is_loopback
+    except ValueError:
+        # It's a hostname, try to resolve it
+        try:
+            addrinfo = socket.getaddrinfo(hostname, None)
+            for res in addrinfo:
+                ip = ipaddress.ip_address(res[4][0])
+                if ip.is_private and not ip.is_loopback:
+                    return True
+        except socket.gaierror:
+            # Can't resolve hostname, assume it's safe
+            pass
+    return False
+
+
 @api_bp.route('/api/config/test_proxy', methods=['POST'])
 @require_auth_with_permissions(allow_downloader=False)
 @rate_limit_by_ip(max_attempts=10, window_seconds=60)
@@ -89,9 +165,29 @@ def api_config_test_proxy():
             'error': 'No proxy URL provided'
         }), 400
 
+    # Validate proxy URL to prevent SSRF attacks
+    if not _is_safe_proxy_url(proxy_url):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid proxy URL format'
+        }), 400
+
     # Normalize URL: add http:// if no scheme is present
     if not proxy_url.startswith(('http://', 'https://', 'socks5://')):
         proxy_url = f"http://{proxy_url}"
+
+    # Validate username and password to prevent injection
+    if username and not _is_valid_proxy_auth(username):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid proxy username format'
+        }), 400
+        
+    if password and not _is_valid_proxy_auth(password):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid proxy password format'
+        }), 400
 
     # Build proxy URL with authentication if provided
     if username and password:
@@ -152,6 +248,78 @@ def api_config_test_proxy():
         }), 500
 
 
+def _is_safe_proxy_url(url):
+    """Validate proxy URL to prevent SSRF attacks"""
+    from urllib.parse import urlparse
+    import re
+    
+    # Basic format check
+    if not isinstance(url, str) or len(url) > 2048:
+        return False
+        
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or parsed.netloc.split(':')[0]
+        
+        # Check for IP addresses and hostnames
+        if not hostname:
+            return False
+            
+        # Block private IP ranges to prevent SSRF
+        if _is_private_ip(hostname):
+            return False
+            
+        # Validate hostname format
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-_.]*[a-zA-Z0-9]$', hostname) and \
+           not re.match(r'^(\d{1,3}\.){3}\d{1,3}$', hostname):
+            return False
+            
+        # Check port range if specified
+        if parsed.port and (parsed.port < 1 or parsed.port > 65535):
+            return False
+            
+        # Only allow safe schemes
+        return parsed.scheme in ['', 'http', 'https', 'socks5', 'socks5h']
+        
+    except Exception:
+        return False
+
+
+def _is_private_ip(hostname):
+    """Check if hostname resolves to a private IP address"""
+    import socket
+    import ipaddress
+    
+    try:
+        # If it's already an IP address
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        # It's a hostname, try to resolve it
+        try:
+            addrinfo = socket.getaddrinfo(hostname, None)
+            for res in addrinfo:
+                ip = ipaddress.ip_address(res[4][0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return True
+        except socket.gaierror:
+            # Can't resolve hostname, assume it's safe
+            pass
+    return False
+
+
+def _is_valid_proxy_auth(auth_str):
+    """Validate proxy username/password format to prevent injection"""
+    if not isinstance(auth_str, str):
+        return False
+    # Check length and disallow control characters
+    if len(auth_str) > 255 or not auth_str or any(ord(c) < 32 or ord(c) == 127 for c in auth_str):
+        return False
+    # Check for URL special characters that could cause injection
+    import re
+    return not re.search(r'[^\w\-_.@]', auth_str)
+
+
 def _test_key_single_domain(test_key, domain):
     """Test fast download key with a specific domain."""
     import requests
@@ -202,6 +370,13 @@ def api_config_test_key():
             'error': 'No key provided'
         }), 400
 
+    # Validate key format to prevent injection
+    if not _is_valid_secret_key_format(test_key):
+        return jsonify({
+            'success': False,
+            'error': 'Invalid key format'
+        }), 400
+
     try:
         # Use domain rotation to test the key
         result = try_domains_until_success(_test_key_single_domain, test_key)
@@ -242,6 +417,15 @@ def api_config_test_key():
                 'success': False,
                 'error': f'Connection failed: {error_msg}'
             }), 500
+
+
+def _is_valid_secret_key_format(key):
+    """Validate secret key format to prevent injection"""
+    import re
+    if not isinstance(key, str):
+        return False
+    # Check length and format - should match the expected secret key format
+    return re.match(r'^[A-Za-z0-9_-]{32,128}$', key) is not None
     
 @api_bp.route('/api/config', methods=['POST'])
 @require_auth_with_permissions(allow_downloader=False)
