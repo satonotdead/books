@@ -14,9 +14,9 @@ from stacks.downloader.utils import get_unique_filename
 
 class AnnaDownloader:
     def __init__(self, output_dir="./downloads", incomplete_dir=None, progress_callback=None,
-                 fast_download_config=None, flaresolverr_url=None, flaresolverr_timeout=60000,
+                 fast_download_config=None, flaresolverr_url=None, flaresolverr_timeout=120000,
                  status_callback=None, prefer_title_naming=False, include_hash="none",
-                 proxy_config=None):
+                 proxy_config=None, allow_external_mirrors=False):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,12 +80,15 @@ class AnnaDownloader:
         # Filename preference configuration
         self.prefer_title_naming = prefer_title_naming
         self.include_hash = include_hash  # "none", "prefix", or "suffix"
+        self.allow_external_mirrors = allow_external_mirrors
+
+        source_mode = "all download sources" if allow_external_mirrors else "Anna's Archive slow_download sources only"
 
         if flaresolverr_url:
             self.logger.info(f"FlareSolverr enabled: {flaresolverr_url}")
-            self.logger.info("Using ALL download sources (Anna's Archive slow_download + external mirrors)")
+            self.logger.info(f"Using {source_mode}")
         else:
-            self.logger.info("FlareSolverr not configured - using external mirrors and slow_download with cached cookies")
+            self.logger.info(f"FlareSolverr not configured - using {source_mode}")
 
         if self.proxy_config.get('enabled') and self.proxy_config.get('url'):
             self.logger.info(f"Proxy enabled: {self.proxy_config['url']}")
@@ -97,8 +100,8 @@ class AnnaDownloader:
     def load_cached_cookies(self, domain=None):
         return _load_cached_cookies(self, domain)
 
-    def save_cookies_to_cache(self, cookies_dict, domain=None):
-        return _save_cookies_to_cache(self, cookies_dict, domain)
+    def save_cookies_to_cache(self, cookies_dict, domain=None, user_agent=None):
+        return _save_cookies_to_cache(self, cookies_dict, domain, user_agent=user_agent)
 
     def prewarm_cookies(self):
         return _prewarm_cookies(self)

@@ -43,20 +43,30 @@ All settings can be modified through the web interface Settings tab or by editin
 
 ## Environment Variables
 
-Set in `docker-compose.yml`:
+Set in `docker-compose.yml` or via `.env` file:
+
+```bash
+# Create a .env file in the same directory as docker-compose.yml
+USERNAME=admin
+PASSWORD=your_secure_password
+SOLVERR_URL=flaresolverr:8191
+TZ=UTC
+```
 
 ```yaml
 environment:
-  - TZ=UTC # Timezone for logs and timestamps
-  - USERNAME=admin # Initial username (seeds config on first run)
-  - PASSWORD=stacks # Initial password (seeds config on first run)
-  - SOLVERR_URL=flaresolverr:8191 # Embedds the URL and port for FlareSolverr on first run
+  - TZ=${TZ:-UTC} # Timezone for logs and timestamps
+  - USERNAME=${USERNAME:-admin} # Initial username (seeds config on first run)
+  - PASSWORD=${PASSWORD} # Initial password (seeds config on first run)
+  - SOLVERR_URL=${SOLVERR_URL:-flaresolverr:8191} # Enables FlareSolverr and embeds the URL/port on first run
   - RESET_ADMIN=true # Force password reset
   - FLASK_DEBUG=true # Sets Flask into Debug mode on startup
 
 ```
 
 **Note:** `USERNAME` and `PASSWORD` variables only seed the initial configuration. Once the config file exists, environment variables are ignored unless the password hash is invalid or `RESET_ADMIN=true` is set. In other words, once you have persistent volumes and a valid config it is safe to remove them from the compose file.
+
+**Best Practice:** Create a `.env` file to store sensitive values separately from the `docker-compose.yml` file. This keeps secrets out of version control and makes configuration easier to manage.
 
 ## Network Access
 

@@ -11,41 +11,45 @@ services:
     stop_grace_period: 30s
     ports:
       # Change the left value if 7788 is already taken
-      - "7788:7788"
+      - "127.0.0.1:7788:7788"
     volumes:
       # REQUIRED: Change these paths to match your system
       # For Windows, use / instead of \, for instance C:/path/to/downloads
-      - "/path/to/config:/opt/stacks/config"       # Configuration folder
-      - "/path/to/download:/opt/stacks/download"   # Downloaded files
-      - "/path/to/logs:/opt/stacks/logs"           # Log files
+      - "./data//config:/opt/stacks/config"       # Configuration folder
+      - "./data/download:/opt/stacks/download"   # Downloaded files
+      - "./data/logs:/opt/stacks/logs"           # Log files
 
       # OPTIONAL: Separate incomplete folder (requires setting in Stacks UI)
       # Uncomment and set incomplete_folder_path to "/incomplete" in the UI
       # - "/path/to/incomplete:/opt/stacks/incomplete"
+    tmpfs:
+      # Worker heartbeats are high-frequency, non-durable runtime state.
+      - /run/stacks:mode=0700,size=1m
     restart: unless-stopped
     environment:
       # Only applies to first run, after that the config.yaml has all relevant info
-      - USERNAME=admin    # Feel free to change this
-      - PASSWORD=stacks   # Please change this!
+      - USERNAME=${USERNAME:-admin}    # Feel free to change this
+      - PASSWORD=${PASSWORD}   # Please change this!
       # Uncomment to reset admin password to above values
       # - RESET_ADMIN=true
 
       # If you're using the included flaresolverr, this will automatically connect it.
       # If you already got it running, you can change this address to match your local
       # setup, or delete this variable and set it up inside Stacks.
-      - SOLVERR_URL=flaresolverr:8191
+      - SOLVERR_URL=${SOLVERR_URL:-flaresolverr:8191}
+
+      # Keep health-check writes off the persistent NAS config volume.
+      - STACKS_RUNTIME_PATH=/run/stacks
 
       # Set your timezone, a comprehensive list can be found here:
       # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
-      - TZ=UTC
+      - TZ=${TZ:-UTC}
 
   # Optional, but recommended, bypasses Cloudflare and DDoS-Guard to allow slow download
   # to go more smoothly
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
-    ports:
-      - '8191:8191'
     environment:
       - LOG_LEVEL=info
     restart: unless-stopped
